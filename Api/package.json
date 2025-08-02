@@ -6,7 +6,8 @@
     "multer": "^2.0.2",
     "pdf-parse": "^1.1.1",
     "pdf-poppler": "^0.2.1",
-    "pdfkit": "^0.17.1"
+    "pdfkit": "^0.17.1",
+    "tesseract.js": "^6.0.1"
   },
   "name": "api",
   "version": "1.0.0",
