@@ -1,65 +1,140 @@
-const fs = require('fs')
-const path = require('path')
-const pdf = require('pdf-poppler')
+const fs = require('fs');
+const path = require('path');
 const PDFDocument = require('pdfkit');
+const pdfPoppler = require('pdf-poppler');
+const pdfParse = require('pdf-parse');
+const Epub = require('epub-gen');
 
-const uploadDir = path.join(__dirname, '..', 'uploads')
-const outputDir = path.join(__dirname, '..', 'images')
+// Paths
+const uploadDir = path.join(__dirname, '..', 'uploads');
+const outputDir = path.join(__dirname, '..', 'images');
+const epubsDir = path.join(__dirname, '..', 'epubs');
+const outputPdfPath = path.join(__dirname, '..', 'output.pdf');
 
+// Create unique filenames
+function generateFilename(base, ext) {
+  const timestamp = Date.now();
+  return `${base}_${timestamp}.${ext}`;
+}
+
+// PDF → Images
 exports.convertPDF = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).send('No PDF file uploaded.')
+    if (!req.file) return res.status(400).send('No PDF file uploaded.');
 
-    // Save PDF from memory to disk
-    const pdfPath = path.join(uploadDir, 'uploaded.pdf')
-    fs.writeFileSync(pdfPath, req.file.buffer)
+    const pdfPath = path.join(uploadDir, generateFilename('uploaded', 'pdf'));
+    fs.writeFileSync(pdfPath, req.file.buffer);
 
     const options = {
       format: 'png',
       out_dir: outputDir,
       out_prefix: 'page',
       page: null,
-    }
+    };
 
-    console.log('Converting PDF to images...')
-    await pdf.convert(pdfPath, options)
-    console.log('Conversion completed')
-
-    res.status(200).send('PDF converted to images. Check the /images folder.')
+    await pdfPoppler.convert(pdfPath, options);
+    res.send('PDF converted to images. Check /images folder.');
   } catch (err) {
-    console.error('Conversion error:', err.message)
-    res.status(500).send('PDF to images conversion failed.')
+    console.error('PDF to Image Error:', err.message);
+    res.status(500).send('Failed to convert PDF to images.');
   }
-}
-////////////////////////////////////
+};
 
-exports.convertImagesToPDF = (req, res) => {
+// Images → PDF
+exports.convertImagesToPDF = async (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).send('No images uploaded.');
   }
 
-  const pdfPath = path.join(__dirname, '..', '..', 'img2pdf', 'pdf_output', 'output.pdf');
   const doc = new PDFDocument({ autoFirstPage: false });
-  console.log('Saving final PDF to:', pdfPath);
-  const stream = fs.createWriteStream(pdfPath);
+  const stream = fs.createWriteStream(outputPdfPath);
   doc.pipe(stream);
 
   try {
     req.files.forEach(file => {
-      const imagePath = file.path;
-      const image = doc.openImage(imagePath);
+      const image = doc.openImage(file.path);
       doc.addPage({ size: [image.width, image.height] });
-      doc.image(imagePath, 0, 0);
+      doc.image(file.path, 0, 0);
     });
 
     doc.end();
 
     stream.on('finish', () => {
-      console.log('PDF created at:', pdfPath);
-      res.send('Images converted to PDF. File saved as output.pdf.');
+      console.log('PDF created at:', outputPdfPath);
+      res.send('Images converted to PDF. Saved as output.pdf');
     });
   } catch (err) {
-    console.error('Conversion error:', err.message);
+    console.error('Image to PDF Error:', err.message);
     res.status(500).send('Failed to convert images to PDF.');
   }
 };
+
+// PDF → EPUB (with text + extracted images)
+exports.convertPdfToEpub = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).send('No PDF file uploaded.');
+
+    const epubPdfPath = path.join(uploadDir, generateFilename('epub_input', 'pdf'));
+    fs.writeFileSync(epubPdfPath, req.file.buffer);
+
+    const pdfBuffer = fs.readFileSync(epubPdfPath);
+    const pdfData = await pdfParse(pdfBuffer);
+
+    // Convert to images for embedding in EPUB
+    const epubImageDir = path.join(outputDir, path.basename(epubPdfPath, '.pdf'));
+    if (!fs.existsSync(epubImageDir)) fs.mkdirSync(epubImageDir, { recursive: true });
+
+    const popplerOptions = {
+      format: 'png',
+      out_dir: epubImageDir,
+      out_prefix: 'page',
+      page: null,
+    };
+
+    await pdfPoppler.convert(epubPdfPath, popplerOptions);
+
+    // Get list of images with absolute paths for epub-gen
+    const imageFiles = fs.readdirSync(epubImageDir).filter(file => file.endsWith('.png'));
+    const imagesHtml = imageFiles.map(image => {
+      const absolutePath = path.join(epubImageDir, image); // absolute local path
+      return `<img src="${absolutePath}" style="width:100%;"/><br/>`;
+    }).join('\n');
+
+    const htmlContent = `
+      ${formatTextAsHtml(pdfData.text)}
+      <hr/>
+      <h2>Extracted Images</h2>
+      ${imagesHtml}
+    `;
+
+    const outputEpubFile = path.join(epubsDir, generateFilename('output', 'epub'));
+
+    const epubOptions = {
+      title: "Converted PDF with Images",
+      author: "Your App",
+      content: [
+        {
+          title: "PDF Content",
+          data: htmlContent
+        }
+      ],
+      output: outputEpubFile
+    };
+
+    await new Epub(epubOptions).promise;
+    res.send('PDF converted to EPUB. File saved in /epubs folder.');
+  } catch (err) {
+    console.error('PDF to EPUB Error:', err.message);
+    res.status(500).send('Failed to convert PDF to EPUB.');
+  }
+};
+
+// Helper: Format text into HTML paragraphs
+function formatTextAsHtml(text) {
+  return text
+    .split('\n')
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
+    .map(p => `<p>${p}</p>`)
+    .join('\n');
+}

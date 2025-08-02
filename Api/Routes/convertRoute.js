@@ -1,18 +1,25 @@
 const express = require('express');
 const router = express.Router();
 
-const uploadPdf = require('../middleware/upload');
-const uploadImages = require('../../img2pdf/middleware/uploadImage');
+const uploadPdf = require('../middleware/upload');              // PDF → Image
+const uploadImages = require('../middleware/uploadImage');      // Images → PDF
+const uploadPdfEpub = require('../middleware/Pdf2epub');        // PDF → EPUB
 
 const {
   convertPDF,
-  convertImagesToPDF
+  convertImagesToPDF,
+  convertPdfToEpub
 } = require('../controllers/convertController');
 
-// Route: PDF → Images
+// PDF → Images
 router.post('/pdf-to-images', uploadPdf.single('pdf'), convertPDF);
 
-// Route: Images → PDF
+// Images → PDF
 router.post('/images-to-pdf', uploadImages.array('images', 10), convertImagesToPDF);
+
+// PDF → EPUB
+console.log('convertPdfToEpub:', typeof convertPdfToEpub);
+
+router.post('/pdf-to-epub', uploadPdfEpub.single('pdf'), convertPdfToEpub);
 
 module.exports = router;

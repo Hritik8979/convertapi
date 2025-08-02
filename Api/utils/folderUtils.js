@@ -1,40 +1,22 @@
 const fs = require('fs');
 const path = require('path');
 
-// Folders for PDF → Image
-const uploadDir = path.join(__dirname, '..', 'uploads');
-const outputDir = path.join(__dirname, '..', 'images');
+const dirs = [
+  path.join(__dirname, '..', 'uploads'),            // for uploaded PDFs (pdf-to-img / pdf-to-epub)
+  path.join(__dirname, '..', 'images'),             // for PNGs generated from PDFs
+  path.join(__dirname, '..', 'uploaded_images'),    // for images uploaded for image-to-pdf
+  path.join(__dirname, '..', 'outputs'),            // common output folder
+  path.join(__dirname, '..', 'epubs'), 
+  path.join(__dirname, '..', 'temp_epub_images'),             // for EPUB output files
+];
 
-// Folders for Image → PDF
-const uploadedImagesDir = path.join(__dirname, '..', 'uploaded_images');
-const pdfOutputDir = path.join(__dirname, '..', '..', 'img2pdf', 'pdf_output'); // Folder, not file
-
-function createAllFolders() {
-  // PDF to Image folders
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
-  // Image to PDF folders
-  if (!fs.existsSync(uploadedImagesDir)) {
-    fs.mkdirSync(uploadedImagesDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(pdfOutputDir)) {
-    fs.mkdirSync(pdfOutputDir, { recursive: true });
-  }
+function createFolders() {
+  dirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`Created: ${dir}`);
+    }
+  });
 }
 
-module.exports = {
-  createAllFolders,
-  paths: {
-    uploadDir,
-    outputDir,
-    uploadedImagesDir,
-    pdfOutputDir
-  }
-};
+module.exports = { createFolders };
