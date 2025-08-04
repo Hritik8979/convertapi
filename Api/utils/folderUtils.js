@@ -2,12 +2,13 @@ const fs = require('fs');
 const path = require('path');
 
 const dirs = [
-  path.join(__dirname, '..', 'uploads'),            // for uploaded PDFs (pdf-to-img / pdf-to-epub)
-  path.join(__dirname, '..', 'images'),             // for PNGs generated from PDFs
-  path.join(__dirname, '..', 'uploaded_images'),    // for images uploaded for image-to-pdf
-  path.join(__dirname, '..', 'outputs'),            // common output folder
-  path.join(__dirname, '..', 'epubs'), 
-  path.join(__dirname, '..', 'temp_epub_images'),             // for EPUB output files
+  path.join(__dirname, '..', 'uploads'),             // For uploaded PDFs (pdf-to-img / pdf-to-epub)
+  path.join(__dirname, '..', 'images'),              // For PNGs generated from PDFs
+  path.join(__dirname, '..', 'uploaded_images'),     // For uploaded images (img-to-pdf)
+  path.join(__dirname, '..', 'outputs'),             // Common output folder
+  path.join(__dirname, '..', 'epubs'),               // For generated EPUB files
+  path.join(__dirname, '..', 'temp_epub_images'),    // Temporary folder for EPUB image conversion
+  path.join(__dirname, '..', 'edited'),              // For storing edited PDFs
 ];
 
 function createFolders() {
