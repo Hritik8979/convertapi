@@ -459,140 +459,128 @@ function generateOutputPath(inputFilename, outputExt) {
 exports.batchConvert = async (req, res) => {
   try {
     const files = req.files;
-    const { targetFormat } = req.body;
+    const formats = req.body.formats;
 
-    if (!files || files.length === 0 || !targetFormat) {
-      return res.status(400).send('Please upload files and specify targetFormat.');
+    if (!files || files.length === 0 || !formats) {
+      return res.status(400).send('Please upload files and specify formats.');
     }
 
-    const targetFormats = targetFormat.toLowerCase().split(',').map(f => f.trim());
+    const targetFormats = Array.isArray(formats) ? formats : [formats];
+
+    if (files.length !== targetFormats.length) {
+      return res.status(400).send('Each file must have a matching format.');
+    }
+
     const results = [];
 
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const targetFormat = targetFormats[i].toLowerCase();
       const inputPath = file.path;
       const inputExt = getExtension(file.originalname);
 
       const convertedOutputs = [];
+      let outputPath = null;
 
-      for (const outputExt of targetFormats) {
-        let outputPath = null;
+      // PDF → JPG
+      if (inputExt === 'pdf' && targetFormat === 'jpg') {
+        const imgDir = path.join(outputDir, path.parse(file.originalname).name + '_jpg');
+        fs.mkdirSync(imgDir, { recursive: true });
+        await pdfPoppler.convert(inputPath, {
+          format: 'jpeg',
+          out_dir: imgDir,
+          out_prefix: 'page',
+          page: null,
+        });
+        outputPath = imgDir;
+      }
 
-        // PDF → JPG
-        if (inputExt === 'pdf' && outputExt === 'jpg') {
-          const imgDir = path.join(outputDir, path.parse(file.originalname).name + '_jpg');
-          fs.mkdirSync(imgDir, { recursive: true });
+      // PDF → TXT
+      else if (inputExt === 'pdf' && targetFormat === 'txt') {
+        const buffer = fs.readFileSync(inputPath);
+        const parsed = await pdfParse(buffer);
+        let finalText = parsed.text;
+
+        if (!finalText.trim()) {
+          const tempImageDir = path.join(outputDir, path.parse(file.originalname).name);
+          fs.mkdirSync(tempImageDir, { recursive: true });
+
           await pdfPoppler.convert(inputPath, {
             format: 'jpeg',
-            out_dir: imgDir,
+            out_dir: tempImageDir,
             out_prefix: 'page',
             page: null,
           });
-          outputPath = imgDir;
+
+          const imageFiles = fs.readdirSync(tempImageDir).filter(f => f.endsWith('.jpg'));
+          const imagePaths = imageFiles.map(f => path.join(tempImageDir, f));
+
+          const ocrTexts = await Promise.all(
+            imagePaths.map(img =>
+              Tesseract.recognize(img, 'eng', { logger: () => {} })
+                .then(result => result.data.text)
+                .catch(err => {
+                  console.error('OCR error:', err.message);
+                  return '';
+                })
+            )
+          );
+
+          finalText = ocrTexts.join('\n');
         }
 
-        // PDF → TXT
-        else if (inputExt === 'pdf' && outputExt === 'txt') {
-          const buffer = fs.readFileSync(inputPath);
-          const parsed = await pdfParse(buffer);
+        outputPath = generateOutputPath(file.originalname, 'txt');
+        fs.writeFileSync(outputPath, finalText || 'No text could be extracted.');
+      }
 
-          let finalText = parsed.text;
+      // PDF → DOCX
+      else if (inputExt === 'pdf' && targetFormat === 'docx') {
+        const buffer = fs.readFileSync(inputPath);
+        const parsed = await pdfParse(buffer);
+        const html = `<html><body><p>${parsed.text.replace(/\n/g, '</p><p>')}</p></body></html>`;
+        const blob = htmlDocx.asBlob(html);
+        const arrayBuffer = await blob.arrayBuffer();
+        const docxBuffer = Buffer.from(arrayBuffer);
+        outputPath = generateOutputPath(file.originalname, 'docx');
+        fs.writeFileSync(outputPath, docxBuffer);
+      }
 
-          // If no text found, fallback to OCR
-          if (!finalText.trim()) {
-            const tempImageDir = path.join(outputDir, path.parse(file.originalname).name);
-            fs.mkdirSync(tempImageDir, { recursive: true });
+      // DOCX → PDF
+      else if (inputExt === 'docx' && targetFormat === 'pdf') {
+        const { value: html } = await mammoth.convertToHtml({ path: inputPath });
+        const browser = await puppeteer.launch();
+        const page = await browser.newPage();
+        await page.setContent(`<html><body>${html}</body></html>`);
+        outputPath = generateOutputPath(file.originalname, 'pdf');
+        await page.pdf({ path: outputPath, format: 'A4' });
+        await browser.close();
+      }
 
-            await pdfPoppler.convert(inputPath, {
-              format: 'jpeg',
-              out_dir: tempImageDir,
-              out_prefix: 'page',
-              page: null
-            });
+      // DOCX → TXT
+      else if (inputExt === 'docx' && targetFormat === 'txt') {
+        const { value: html } = await mammoth.convertToHtml({ path: inputPath });
+        const text = html.replace(/<[^>]*>?/gm, '').trim();
+        outputPath = generateOutputPath(file.originalname, 'txt');
+        fs.writeFileSync(outputPath, text || 'No text could be extracted.');
+      }
 
-            const imageFiles = fs.readdirSync(tempImageDir).filter(f => f.endsWith('.jpg'));
-            const imagePaths = imageFiles.map(f => path.join(tempImageDir, f));
+      // JPG → PDF
+      else if (inputExt === 'jpg' && targetFormat === 'pdf') {
+        const pdfDoc = await PDFLibDoc.create();
+        const imageBytes = fs.readFileSync(inputPath);
+        const image = await pdfDoc.embedJpg(imageBytes);
+        const page = pdfDoc.addPage([image.width, image.height]);
+        page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        const pdfBytes = await pdfDoc.save();
+        outputPath = generateOutputPath(file.originalname, 'pdf');
+        fs.writeFileSync(outputPath, pdfBytes);
+      }
 
-            const ocrTexts = await Promise.all(
-              imagePaths.map(img =>
-                Tesseract.recognize(img, 'eng', { logger: () => { } })
-                  .then(result => result.data.text)
-                  .catch(err => {
-                    console.error('OCR error:', err.message);
-                    return '';
-                  })
-              )
-            );
-
-            finalText = ocrTexts.join('\n');
-          }
-
-          outputPath = generateOutputPath(file.originalname, 'txt');
-          fs.writeFileSync(outputPath, finalText || 'No text could be extracted.');
-        }
-
-
-        // PDF → DOCX (basic HTML→DOCX logic)
-
-        else if (inputExt === 'pdf' && outputExt === 'docx') {
-          const buffer = fs.readFileSync(inputPath);
-          const parsed = await pdfParse(buffer);
-
-          const html = `<html><body><p>${parsed.text.replace(/\n/g, '</p><p>')}</p></body></html>`;
-          const blob = htmlDocx.asBlob(html);
-
-          // Convert Blob to Buffer for Node.js
-          const arrayBuffer = await blob.arrayBuffer();
-          const docxBuffer = Buffer.from(arrayBuffer);
-
-          outputPath = generateOutputPath(file.originalname, 'docx');
-          fs.writeFileSync(outputPath, docxBuffer);
-        }
-
-        // DOCX → PDF
-        else if (inputExt === 'docx' && outputExt === 'pdf') {
-          const { value: html } = await mammoth.convertToHtml({ path: inputPath });
-          const browser = await puppeteer.launch();
-          const page = await browser.newPage();
-          await page.setContent(`<html><body>${html}</body></html>`);
-          outputPath = generateOutputPath(file.originalname, 'pdf');
-          await page.pdf({ path: outputPath, format: 'A4' });
-          await browser.close();
-        }
-
-        // DOCX → TXT
-        else if (inputExt === 'docx' && outputExt === 'txt') {
-          try {
-            const { value: html } = await mammoth.convertToHtml({ path: inputPath });
-
-            // Strip HTML tags to get plain text
-            const text = html.replace(/<[^>]*>?/gm, '').trim();
-
-            outputPath = generateOutputPath(file.originalname, 'txt');
-            fs.writeFileSync(outputPath, text || 'No text could be extracted.');
-          } catch (err) {
-            console.error('DOCX to TXT error:', err.message);
-            outputPath = null;
-          }
-        }
-
-        // JPG → PDF
-        else if (inputExt === 'jpg' && outputExt === 'pdf') {
-          const pdfDoc = await PDFLibDoc.create();
-          const imageBytes = fs.readFileSync(inputPath);
-          const image = await pdfDoc.embedJpg(imageBytes);
-          const page = pdfDoc.addPage([image.width, image.height]);
-          page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
-          const pdfBytes = await pdfDoc.save();
-          outputPath = generateOutputPath(file.originalname, 'pdf');
-          fs.writeFileSync(outputPath, pdfBytes);
-        }
-
-        if (outputPath) {
-          convertedOutputs.push({
-            format: outputExt,
-            output: outputPath.replace(/\\/g, '/')
-          });
-        }
+      if (outputPath) {
+        convertedOutputs.push({
+          format: targetFormat,
+          output: outputPath.replace(/\\/g, '/')
+        });
       }
 
       results.push({
@@ -607,6 +595,7 @@ exports.batchConvert = async (req, res) => {
     res.status(500).send('Batch conversion failed.');
   }
 };
+
 
 
 
